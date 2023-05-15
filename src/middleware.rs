@@ -84,19 +84,20 @@ impl<S> ImplBiscuitMiddleware<S> {
   fn generate_biscuit_token(&self, req: &ServiceRequest) -> MiddlewareResult<Biscuit> {
     // extract token 
     let header_value = Authorization::<Bearer>::parse(req)
-      .map_err(|e| 
-        MiddlewareError::Unauthorized(e.to_string())
-      )?;
+      .map_err(|_e| {
+        #[cfg(feature = "tracing")]
+        warn!("{}", _e.to_string());
+        MiddlewareError::InvalidHeader
+      })?;
     let token = header_value.as_ref()
       .token();
 
     // deserialize token into a biscuit
     Ok(Biscuit::from_base64(token, self.public_key)
-      .map_err(|e| {
-        let trace = e.to_string();
+      .map_err(|_e| {
         #[cfg(feature = "tracing")]
-        warn!(trace);
-        MiddlewareError::Forbidden(trace)
+        warn!("{}", _e.to_string());
+        MiddlewareError::InvalidToken
       })?)
   }
 }
