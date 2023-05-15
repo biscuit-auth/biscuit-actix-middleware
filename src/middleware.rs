@@ -81,7 +81,7 @@ pub struct ImplBiscuitMiddleware<S> {
 }
 
 impl<S> ImplBiscuitMiddleware<S> {
-  fn generate_biscuit_token(&self, req: &ServiceRequest) -> MiddlewareResult<Biscuit> {
+  fn extract_biscuit(&self, req: &ServiceRequest) -> MiddlewareResult<Biscuit> {
     // extract token 
     let header_value = Authorization::<Bearer>::parse(req)
       .map_err(|_e| {
@@ -115,7 +115,7 @@ where
   forward_ready!(service);
 
   fn call(&self, req: ServiceRequest) -> Self::Future {
-    match self.generate_biscuit_token(&req) {
+    match self.extract_biscuit(&req) {
       Ok(biscuit) => {
         req.extensions_mut().insert(biscuit);
         let fut = self.service.call(req);
