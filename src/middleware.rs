@@ -1,9 +1,11 @@
-use std::future::{ready, Ready};
+use std::{future::{ready, Ready}};
 use biscuit::{Biscuit, PublicKey};
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    Error, body::EitherBody, HttpMessage, ResponseError
+    Error, body::EitherBody, HttpMessage, ResponseError,
+    http::header::Header
 };
+use actix_web_httpauth::headers::authorization::{Authorization, Bearer};
 #[cfg(feature = "tracing")]
 use tracing::{warn};
 use crate::error::{MiddlewareError, MiddlewareResult};
@@ -80,20 +82,13 @@ pub struct ImplBiscuitMiddleware<S> {
 
 impl<S> ImplBiscuitMiddleware<S> {
   fn generate_biscuit_token(&self, req: &ServiceRequest) -> MiddlewareResult<Biscuit> {
-    // extract a slice from authorization header
-    let token = &req.headers().get("authorization")
-      .ok_or_else(|| {
-        let trace = "Missing Authorization header".to_string();
-        #[cfg(feature = "tracing")]
-        warn!(trace);
-        MiddlewareError::Unauthorized(trace)
-      })?
-      .to_str().map_err(|_| {
-        let trace = "Biscuit token contains non ASCII chars".to_string();
-        #[cfg(feature = "tracing")]
-        warn!(trace);
-        MiddlewareError::Unauthorized(trace)
-      })?[7..];
+    // extract token 
+    let header_value = Authorization::<Bearer>::parse(req)
+      .map_err(|e| 
+        MiddlewareError::Unauthorized(e.to_string())
+      )?;
+    let token = header_value.as_ref()
+      .token();
 
     // deserialize token into a biscuit
     Ok(Biscuit::from_base64(token, self.public_key)
@@ -132,7 +127,6 @@ where
       Err(e) => {
         Box::pin(async move {
           let r = req.into_response(e.error_response()).map_into_right_body::<B>();
-
           Ok(r)
         })
       }
@@ -210,6 +204,17 @@ mod test {
       .insert_header((
         "authorization",
         "ééé"
+      ))
+      .uri("/test")
+      .to_request();
+    let resp = test::call_service(&app, req).await;
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let req = test::TestRequest::get()
+      .insert_header((
+        "authorization",
+        "Accessible foo"
       ))
       .uri("/test")
       .to_request();

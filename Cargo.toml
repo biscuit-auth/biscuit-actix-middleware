@@ -16,6 +16,7 @@ categories = ["asynchronous", "web-programming"]
 
 [dependencies]
 actix-web = { version = "4.3.1", default-features = false, features = ["macros"] }
+actix-web-httpauth = "0.8.0"
 biscuit-auth = { version = "3.1.0", default-features = false }
 derive_more = { version = "0.99.17", default-features = false }
 futures-util = {version = "0.3.28", default-features = false }
