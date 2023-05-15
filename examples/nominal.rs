@@ -1,7 +1,7 @@
 use actix_web::{App, web, Responder,
   HttpResponse, get, test};
 use biscuit_auth::{Biscuit, KeyPair, 
-  macros::{biscuit, authorizer}, builder_ext::AuthorizerExt};
+  macros::{biscuit, authorizer}};
 use biscuit_actix_middleware::BiscuitMiddleware;
 
 #[get("/hello-admin")]
@@ -13,19 +13,17 @@ async fn hello_admin(token: web::ReqData<Biscuit>) -> impl Responder {
     "#
   );
 
-  // deny if no allow
-  authorizer.add_deny_all();
-
   // link authorizer and token
-  authorizer.add_token(&token)
-    .unwrap();
+  if let Err(_) = authorizer.add_token(&token) {
+    return HttpResponse::InternalServerError().finish()
+  }
 
   // check authorization
-  match authorizer.authorize() {
-    Ok(_) => HttpResponse::Ok().body("Hello admin!"),
-    Err(e) => HttpResponse::Forbidden()
-      .body(e.to_string())
+  if let Err(_) = authorizer.authorize() {
+    return HttpResponse::Forbidden().finish()
   }
+
+  HttpResponse::Ok().body("Hello admin!")
 }
 
 #[actix_web::main]
