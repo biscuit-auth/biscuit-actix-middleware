@@ -1,34 +1,38 @@
-## Revocation feature
+# Biscuit actix middleware
 
-4 configurations are supported:
-- Static store set at service start-up
-- In memory store in actix AppState for monoservice with small list
-- DB store for monoservice with larger list
-- Distributed for multiservices architecture with a dedicated revocation management service 
+On incoming request if there is a valid [bearer token](https://developer.mozilla.org/fr/docs/Web/HTTP/Authentication#bearer) authorization header:
+- deserialize it using public key attribute
+- inject a biscuit as extension in handler
+ 
+ else return an Unauthorized (invalid header format) or Forbidden (deserialization error)
+ with an error message in the body
+ 
+```rust
+  use actix_web::{App, web,
+   HttpResponse, get, HttpServer};
+  use biscuit_auth::{Biscuit, KeyPair};
+  use biscuit_actix_middleware::BiscuitMiddleware;
+ 
+  #[actix_web::main]
+  async fn main() -> std::io::Result<()> {
+    let root = KeyPair::new();
+    let public_key = root.public();
+  
+    HttpServer::new(move || {
+       App::new()
+         .wrap(BiscuitMiddleware {
+           public_key
+         }).service(hello)     
+     })
+     .bind(("127.0.0.1", 8080))?
+     .run()
+     .await
+   }
+   
+  #[get("/hello")]
+  async fn hello(biscuit: web::ReqData<Biscuit>) -> HttpResponse {
+    println!("{}", biscuit.print());
 
-### Static list
-
-TODO
-
-### In memory store
-
-TODO
-
-### DB store 
-
-TODO
-
-### Distributed
-
-For multiservice architecture a dedicated service responsible of revocation management is the recommanded implementation.
-
-This service will store in DB the token revocation ids in the format below:
-- first revocation id from revocation_identifiers()
-- associated public key
-- optionnaly a ttl:
-  - from datalog via a check
-  - private key rotation date
-
-The revocation service exposes via API the token revocation ids list so that other services can fetch it on start-up.
-
-Long polling is used so that revocation service can push new token revocation ids to services.
+    HttpResponse::Ok().finish()
+  }
+```

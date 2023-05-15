@@ -1,11 +1,6 @@
-pub mod middleware;
-pub mod error;
-#[cfg(feature = "ttl")]
-pub mod ttl;
-//#[cfg(feature = "revocation")]
-pub mod revocation;
+mod middleware;
+mod error;
 
 extern crate biscuit_auth as biscuit;
 
- 
-
+pub use middleware::BiscuitMiddleware;

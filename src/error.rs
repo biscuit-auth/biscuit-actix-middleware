@@ -9,8 +9,8 @@ pub enum MiddlewareError {
   #[display(fmt = "Internal Server Error: {}", _0)]
   InternalServerError(String),
   
-  #[display(fmt = "BadRequest: {}", _0)]
-  BadRequest(String),
+  #[display(fmt = "Forbidden: {}", _0)]
+  Forbidden(String),
 
   #[display(fmt = "Unauthorized: {}", _0)]
   Unauthorized(String),
@@ -23,11 +23,11 @@ impl ResponseError for MiddlewareError {
         HttpResponse::InternalServerError()
           .body(trace.clone())
       }
-      MiddlewareError::BadRequest(ref trace) => {
-        HttpResponse::BadRequest().body(trace.clone())
-      }
       MiddlewareError::Unauthorized(ref trace) => {
         HttpResponse::Unauthorized().body(trace.clone())
+      }
+      MiddlewareError::Forbidden(ref trace) => {
+        HttpResponse::Forbidden().body(trace.clone())
       }
     }
   }
