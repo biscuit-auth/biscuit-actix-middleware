@@ -33,9 +33,11 @@ use futures_util::future::LocalBoxFuture;
 ///           public_key
 ///         }).service(hello)     
 ///     })
-///     .bind(("127.0.0.1", 8080))?
-///     .run()
-///     .await
+///     .bind(("127.0.0.1", 8080))?;
+///     //.run()
+///     //.await;
+/// 
+///     Ok(())
 ///   }
 ///   
 ///   #[get("/hello")]
@@ -78,6 +80,7 @@ pub struct ImplBiscuitMiddleware<S> {
 
 impl<S> ImplBiscuitMiddleware<S> {
   fn generate_biscuit_token(&self, req: &ServiceRequest) -> MiddlewareResult<Biscuit> {
+    // extract a slice from authorization header
     let token = &req.headers().get("authorization")
       .ok_or_else(|| {
         let trace = "Missing Authorization header".to_string();
@@ -92,6 +95,7 @@ impl<S> ImplBiscuitMiddleware<S> {
         MiddlewareError::Unauthorized(trace)
       })?[7..];
 
+    // deserialize token into a biscuit
     Ok(Biscuit::from_base64(token, self.public_key)
       .map_err(|e| {
         let trace = e.to_string();
