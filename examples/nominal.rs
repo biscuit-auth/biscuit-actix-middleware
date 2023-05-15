@@ -45,7 +45,7 @@ async fn main() -> std::io::Result<()> {
 
   println!("Biscuit token: {}", biscuit_token);
 
-  // instantiate app using actix test tooles
+  // instantiate app using actix test tools
   let app = test::init_service(
     App::new()
       .wrap(BiscuitMiddleware{
