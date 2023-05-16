@@ -1,0 +1,7 @@
+# This file instructs git to ignore specific commits when using blame
+# github uses it automatically, but it needs a manual action on local
+# repositories:
+# git config blame.ignoreRevsFile .git-blame-ignore-revs 
+
+# Apply cargo fmt
+85bcab66749bcf97db5a3623f78e19cd8146db07
