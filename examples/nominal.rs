@@ -14,12 +14,12 @@ async fn hello_admin(token: web::ReqData<Biscuit>) -> impl Responder {
   );
 
   // link authorizer and token
-  if let Err(_) = authorizer.add_token(&token) {
+  if authorizer.add_token(&token).is_err() {
     return HttpResponse::InternalServerError().finish()
   }
 
   // check authorization
-  if let Err(_) = authorizer.authorize() {
+  if authorizer.authorize().is_err() {
     return HttpResponse::Forbidden().finish()
   }
 

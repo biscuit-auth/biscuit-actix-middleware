@@ -93,12 +93,12 @@ impl<S> ImplBiscuitMiddleware<S> {
       .token();
 
     // deserialize token into a biscuit
-    Ok(Biscuit::from_base64(token, self.public_key)
+    Biscuit::from_base64(token, self.public_key)
       .map_err(|_e| {
         #[cfg(feature = "tracing")]
         warn!("{}", _e.to_string());
         MiddlewareError::InvalidToken
-      })?)
+      })
   }
 }
 
