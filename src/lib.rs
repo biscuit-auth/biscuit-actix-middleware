@@ -1,5 +1,5 @@
-mod middleware;
 mod error;
+mod middleware;
 
 extern crate biscuit_auth as biscuit;
 
