@@ -12,18 +12,17 @@ use std::future::{ready, Ready};
 #[cfg(feature = "tracing")]
 use tracing::warn;
 
-/// On incoming request if there is a valid [bearer token](https://developer.mozilla.org/fr/docs/Web/HTTP/Authentication#bearer) authorization header:
-/// - deserialize it using public key attribute
+/// On incoming request if there is a valid [bearer token](https://datatracker.ietf.org/doc/html/rfc6750#section-2.1) authorization header:
+/// - deserialize it using the provided public key
 /// - inject a biscuit as extension in handler
 ///
-/// else return an Unauthorized (invalid header format) or Forbidden (deserialization error)
+/// else return an 401 Unauthorized (missing or invalid header) or 403 Forbidden (deserialization error)
 /// with an error message in the body
 ///
 /// ```rust
-///  use actix_web::{App, web,
-///   HttpResponse, get, HttpServer};
-///  use biscuit_auth::{Biscuit, KeyPair};
+///  use actix_web::{get, web, App, HttpResponse, HttpServer};
 ///  use biscuit_actix_middleware::BiscuitMiddleware;
+///  use biscuit_auth::{macros::*, Biscuit, KeyPair};
 ///
 ///  #[actix_web::main]
 ///  async fn main() -> std::io::Result<()> {
@@ -37,17 +36,28 @@ use tracing::warn;
 ///         }).service(hello)     
 ///     })
 ///     .bind(("127.0.0.1", 8080))?;
+///     // this code is ran during tests so we can't start a long-running server
+///     // uncomment the two lines below and remove the `Ok(())`.
 ///     //.run()
-///     //.await;
-///
+///     //.await
 ///     Ok(())
 ///   }
 ///   
 ///   #[get("/hello")]
 ///   async fn hello(biscuit: web::ReqData<Biscuit>) -> HttpResponse {
 ///     println!("{}", biscuit.print());
-///  
-///     HttpResponse::Ok().finish()
+///     let mut authorizer = authorizer!(
+///         r#"
+///       allow if role("admin");
+///     "#
+///     );
+///
+///     authorizer.add_token(&biscuit).unwrap();
+///     if authorizer.authorize().is_err() {
+///         return HttpResponse::Forbidden().finish();
+///     }
+///
+///     HttpResponse::Ok().body("Hello admin!")
 ///   }
 /// ```
 
