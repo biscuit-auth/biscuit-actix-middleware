@@ -2,6 +2,8 @@ use actix_web::{get, web, App, HttpResponse, HttpServer};
 use biscuit_actix_middleware::BiscuitMiddleware;
 use biscuit_auth::{macros::*, Biscuit, PublicKey};
 #[cfg(feature = "tracing")]
+use tracing::warn;
+#[cfg(feature = "tracing")]
 use tracing_actix_web::TracingLogger;
 
 #[actix_web::main]
@@ -64,7 +66,9 @@ async fn hello(biscuit: web::ReqData<Biscuit>) -> HttpResponse {
     );
 
     authorizer.add_token(&biscuit).unwrap();
-    if authorizer.authorize().is_err() {
+    if let Err(_e) = authorizer.authorize() {
+        #[cfg(feature = "tracing")]
+        warn!("{}", _e.to_string());
         return HttpResponse::Forbidden().finish();
     }
 
