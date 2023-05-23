@@ -17,6 +17,8 @@ Here is a web server exposing `GET /hello`, only to tokens containing the `role(
 
 A complete, runnable example can be found in `examples/readme.rs`, and can be run with `BISCUIT_PUBLIC_KEY=<public key> cargo run --example readme`.
 
+Optionally, you can enable tracing feature with `BISCUIT_PUBLIC_KEY=<public key> cargo run --example readme --features tracing` to observe middleware traces as log in the console.
+
 ```rust
 use actix_web::{get, web, App, HttpResponse, HttpServer};
 use biscuit_actix_middleware::BiscuitMiddleware;

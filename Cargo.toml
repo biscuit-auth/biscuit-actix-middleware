@@ -25,3 +25,5 @@ tracing = { version = "0.1.37", default-features = false, optional = true }
 
 [dev-dependencies]
 biscuit-auth = { version = "3.1.0" }
+tracing-actix-web = "0.7.3"
+tracing-subscriber = {version = "0.3.16", features = ["env-filter"]}
