@@ -42,14 +42,14 @@ Because of custom configuration, the token has to be set in the biscuit header:
                     .token_extractor(|req: &ServiceRequest| {
                         println!("Extracting token with custom extractor");
 
-                        Ok(req
-                            .headers()
-                            .get("biscuit")
-                            .ok_or(())?
-                            .to_str()
-                            .map_err(|_| ())?
-                            .to_string()
-                            .into_bytes())
+                        Some(
+                            req.headers()
+                                .get("biscuit")?
+                                .to_str()
+                                .ok()?
+                                .to_string()
+                                .into_bytes(),
+                        )
                     }),
             )
             .service(hello)

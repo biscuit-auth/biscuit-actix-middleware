@@ -13,7 +13,7 @@ use std::future::{ready, Ready};
 use tracing::warn;
 
 type ErrorHandler = fn(MiddlewareError, &ServiceRequest) -> HttpResponse;
-type TokenExtractor = fn(&ServiceRequest) -> Result<Vec<u8>, ()>;
+type TokenExtractor = fn(&ServiceRequest) -> Option<Vec<u8>>;
 
 /// On incoming request if there is a valid [bearer token](https://datatracker.ietf.org/doc/html/rfc6750#section-2.1) authorization header:
 /// - deserialize it using the provided public key
@@ -78,12 +78,19 @@ impl BiscuitMiddleware {
             public_key,
             error_handler: |err: MiddlewareError, _: &ServiceRequest| err.error_response(),
             token_extractor: |req: &ServiceRequest| {
-                let header_value = Authorization::<Bearer>::parse(req).map_err(|_e| {
-                    #[cfg(feature = "tracing")]
-                    warn!("{}", _e.to_string());
-                    ()
-                })?;
-                Ok(header_value.as_ref().token().to_string().into_bytes())
+                Some(
+                    Authorization::<Bearer>::parse(req)
+                        .map_err(|_e| {
+                            #[cfg(feature = "tracing")]
+                            warn!("{}", _e.to_string());
+                            ()
+                        })
+                        .ok()?
+                        .as_ref()
+                        .token()
+                        .to_string()
+                        .into_bytes(),
+                )
             },
         }
     }
@@ -132,7 +139,6 @@ impl BiscuitMiddleware {
     }
 
     /// Add a custom token extractor to an existing middleware.
-    /// The [Result] error type is `()` to keep error messages vague. To customize middleware errors [HttpResponse] see [BiscuitMiddleware::error_handler](BiscuitMiddleware#method.error_handler) method.
     ///
     /// # Example
     /// ```rust
@@ -146,21 +152,18 @@ impl BiscuitMiddleware {
     ///     
     ///     BiscuitMiddleware::new(public_key)
     ///         .token_extractor(|req: &ServiceRequest| {
-    ///             Ok(req
-    ///                 .headers()
-    ///                 .get("biscuit")
-    ///                 .ok_or(())?
-    ///                 .to_str()
-    ///                 .map_err(|_| ())?
-    ///                 .to_string()
-    ///                 .into_bytes())
+    ///             Some(
+    ///                 req.headers()
+    ///                     .get("biscuit")?
+    ///                     .to_str()
+    ///                     .ok()?
+    ///                     .to_string()
+    ///                     .into_bytes(),
+    ///             )
     ///         });
     /// }
     /// ```
-    pub fn token_extractor(
-        mut self,
-        extractor: fn(&ServiceRequest) -> Result<Vec<u8>, ()>,
-    ) -> Self {
+    pub fn token_extractor(mut self, extractor: fn(&ServiceRequest) -> Option<Vec<u8>>) -> Self {
         self.token_extractor = extractor;
 
         self
@@ -199,7 +202,7 @@ pub struct ImplBiscuitMiddleware<S> {
 impl<S> ImplBiscuitMiddleware<S> {
     fn extract_biscuit(&self, req: &ServiceRequest) -> MiddlewareResult<Biscuit> {
         let token = (self.token_extractor)(req)
-            .map_err(|_| (self.error_handler)(MiddlewareError::InvalidHeader, req))?;
+            .ok_or((self.error_handler)(MiddlewareError::InvalidHeader, req))?;
 
         // deserialize token into a biscuit
         Biscuit::from_base64(token, self.public_key).map_err(|_e| {
@@ -348,14 +351,14 @@ mod test {
             App::new()
                 .wrap(BiscuitMiddleware::new(root.public()).token_extractor(
                     |req: &ServiceRequest| {
-                        Ok(req
-                            .headers()
-                            .get("biscuit")
-                            .ok_or(())?
-                            .to_str()
-                            .map_err(|_| ())?
-                            .to_string()
-                            .into_bytes())
+                        Some(
+                            req.headers()
+                                .get("biscuit")?
+                                .to_str()
+                                .ok()?
+                                .to_string()
+                                .into_bytes(),
+                        )
                     },
                 ))
                 .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
@@ -380,14 +383,14 @@ mod test {
                 .wrap(
                     BiscuitMiddleware::new(root.public())
                         .token_extractor(|req: &ServiceRequest| {
-                            Ok(req
-                                .headers()
-                                .get("biscuit")
-                                .ok_or(())?
-                                .to_str()
-                                .map_err(|_| ())?
-                                .to_string()
-                                .into_bytes())
+                            Some(
+                                req.headers()
+                                    .get("biscuit")?
+                                    .to_str()
+                                    .ok()?
+                                    .to_string()
+                                    .into_bytes(),
+                            )
                         })
                         .error_handler(|_: MiddlewareError, _: &ServiceRequest| {
                             HttpResponse::BadRequest().finish()
