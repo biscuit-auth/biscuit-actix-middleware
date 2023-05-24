@@ -3,11 +3,6 @@ use derive_more::Display;
 
 pub(crate) type MiddlewareResult<R> = Result<R, HttpResponse>;
 
-pub enum MiddlewareErrorResponse {
-    ResponseError(Box<dyn ResponseError>),
-    HttpResponse(HttpResponse),
-}
-
 #[derive(Debug, Display)]
 pub enum MiddlewareError {
     InvalidHeader,

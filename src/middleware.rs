@@ -1,9 +1,9 @@
-use crate::error::{MiddlewareError, MiddlewareErrorResponse, MiddlewareResult};
+use crate::error::{MiddlewareError, MiddlewareResult};
 use actix_web::{
     body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     http::header::Header,
-    Error, HttpMessage, ResponseError,
+    Error, HttpMessage, HttpResponse, ResponseError,
 };
 use actix_web_httpauth::headers::authorization::{Authorization, Bearer};
 use biscuit::{Biscuit, PublicKey};
@@ -11,6 +11,9 @@ use futures_util::future::LocalBoxFuture;
 use std::future::{ready, Ready};
 #[cfg(feature = "tracing")]
 use tracing::warn;
+
+type ErrorHandler = fn(MiddlewareError, &ServiceRequest) -> HttpResponse;
+type TokenExtractor = fn(&ServiceRequest) -> Result<Vec<u8>, ()>;
 
 /// On incoming request if there is a valid [bearer token](https://datatracker.ietf.org/doc/html/rfc6750#section-2.1) authorization header:
 /// - deserialize it using the provided public key
@@ -64,7 +67,8 @@ use tracing::warn;
 
 pub struct BiscuitMiddleware {
     public_key: PublicKey,
-    error_handler: fn(MiddlewareError, &ServiceRequest) -> MiddlewareErrorResponse,
+    error_handler: ErrorHandler,
+    token_extractor: TokenExtractor,
 }
 
 impl BiscuitMiddleware {
@@ -72,13 +76,19 @@ impl BiscuitMiddleware {
     pub fn new(public_key: PublicKey) -> BiscuitMiddleware {
         BiscuitMiddleware {
             public_key,
-            error_handler: |err: MiddlewareError, _: &ServiceRequest| {
-                MiddlewareErrorResponse::ResponseError(Box::new(err) as Box<dyn ResponseError>)
+            error_handler: |err: MiddlewareError, _: &ServiceRequest| err.error_response(),
+            token_extractor: |req: &ServiceRequest| {
+                let header_value = Authorization::<Bearer>::parse(req).map_err(|_e| {
+                    #[cfg(feature = "tracing")]
+                    warn!("{}", _e.to_string());
+                    ()
+                })?;
+                Ok(header_value.as_ref().token().to_string().into_bytes())
             },
         }
     }
 
-    /// Middleware error handling via [function pointer](https://doc.rust-lang.org/reference/types/function-pointer.html). [MiddlewareErrorResponse] can either carry an existing actix [ResponseError] implementation or a [HttpResponse](actix_web::response::HttpResponse)
+    /// Add a custom error handler to an existing middleware.
     ///
     /// # Example
     /// ```rust
@@ -87,19 +97,12 @@ impl BiscuitMiddleware {
     /// fn main() {
     ///     let root = KeyPair::new();
     ///     let public_key = root.public();
-    ///
-    ///     let response_error_handler = |err: MiddlewareError,
-    ///         _: &ServiceRequest| -> MiddlewareErrorResponse {
-    ///         MiddlewareErrorResponse::ResponseError(Box::new(AppError::BiscuitToken))
-    ///     };
-    ///         
-    ///     let http_response_handler = |err: MiddlewareError,
-    ///         _: &ServiceRequest| -> MiddlewareErrorResponse {
-    ///         MiddlewareErrorResponse::HttpResponse(HttpResponse::Unauthorized().finish())
-    ///     };
     ///     
     ///     BiscuitMiddleware::new(public_key)
-    ///         .error_handler(response_error_handler);
+    ///         .error_handler(
+    ///             |err: MiddlewareError, _: &ServiceRequest| -> HttpResponse {
+    ///                 AppError::BiscuitToken.error_response()
+    ///             });
     ///     
     ///     #[derive(Debug, Display)]
     ///     enum AppError {
@@ -121,9 +124,46 @@ impl BiscuitMiddleware {
     /// ```
     pub fn error_handler(
         mut self,
-        handler: fn(MiddlewareError, &ServiceRequest) -> MiddlewareErrorResponse,
+        handler: fn(MiddlewareError, &ServiceRequest) -> HttpResponse,
     ) -> Self {
         self.error_handler = handler;
+
+        self
+    }
+
+    /// Add a custom token extractor to an existing middleware.
+    /// The [Result] error type is voluntarily () to rely on middleware or an [ErrorHandler] implementation to define
+    /// invalid header behavior.
+    ///
+    ///
+    /// # Example
+    /// ```rust
+    /// use biscuit_actix_middleware::BiscuitMiddleware;
+    /// use actix_web::{dev::ServiceRequest};
+    /// use biscuit_auth::KeyPair;
+    ///
+    /// fn main() {
+    ///     let root = KeyPair::new();
+    ///     let public_key = root.public();
+    ///     
+    ///     BiscuitMiddleware::new(public_key)
+    ///         .token_extractor(|req: &ServiceRequest| {
+    ///             Ok(req
+    ///                 .headers()
+    ///                 .get("biscuit")
+    ///                 .ok_or(())?
+    ///                 .to_str()
+    ///                 .map_err(|_| ())?
+    ///                 .to_string()
+    ///                 .into_bytes())
+    ///         });
+    /// }
+    /// ```
+    pub fn token_extractor(
+        mut self,
+        extractor: fn(&ServiceRequest) -> Result<Vec<u8>, ()>,
+    ) -> Self {
+        self.token_extractor = extractor;
 
         self
     }
@@ -146,6 +186,7 @@ where
             service,
             public_key: self.public_key,
             error_handler: self.error_handler,
+            token_extractor: self.token_extractor,
         }))
     }
 }
@@ -153,30 +194,20 @@ where
 pub struct ImplBiscuitMiddleware<S> {
     service: S,
     public_key: PublicKey,
-    error_handler: fn(MiddlewareError, &ServiceRequest) -> MiddlewareErrorResponse,
+    error_handler: ErrorHandler,
+    token_extractor: TokenExtractor,
 }
 
 impl<S> ImplBiscuitMiddleware<S> {
     fn extract_biscuit(&self, req: &ServiceRequest) -> MiddlewareResult<Biscuit> {
-        // extract token
-        let header_value = Authorization::<Bearer>::parse(req).map_err(|_e| {
-            #[cfg(feature = "tracing")]
-            warn!("{}", _e.to_string());
-            match (self.error_handler)(MiddlewareError::InvalidHeader, req) {
-                MiddlewareErrorResponse::ResponseError(e) => e.error_response(),
-                MiddlewareErrorResponse::HttpResponse(http) => http,
-            }
-        })?;
-        let token = header_value.as_ref().token();
+        let token = (self.token_extractor)(req)
+            .map_err(|_| (self.error_handler)(MiddlewareError::InvalidHeader, req))?;
 
         // deserialize token into a biscuit
         Biscuit::from_base64(token, self.public_key).map_err(|_e| {
             #[cfg(feature = "tracing")]
             warn!("{}", _e.to_string());
-            match (self.error_handler)(MiddlewareError::InvalidToken, req) {
-                MiddlewareErrorResponse::ResponseError(e) => e.error_response(),
-                MiddlewareErrorResponse::HttpResponse(http) => http,
-            }
+            (self.error_handler)(MiddlewareError::InvalidToken, req)
         })
     }
 }
@@ -217,7 +248,6 @@ mod test {
     use super::*;
     use actix_web::{http::StatusCode, test, web, App, HttpResponse};
     use biscuit::KeyPair;
-    use derive_more::Display;
 
     #[actix_web::test]
     async fn test_nominal() {
@@ -294,14 +324,12 @@ mod test {
     }
 
     #[actix_web::test]
-    async fn test_custom_error_http_response() {
+    async fn test_error_handling() {
         let root = KeyPair::new();
         let app = test::init_service(
             App::new()
                 .wrap(BiscuitMiddleware::new(root.public()).error_handler(
-                    |_: MiddlewareError, _: &ServiceRequest| {
-                        MiddlewareErrorResponse::HttpResponse(HttpResponse::BadRequest().finish())
-                    },
+                    |_: MiddlewareError, _: &ServiceRequest| HttpResponse::BadRequest().finish(),
                 ))
                 .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
         )
@@ -314,26 +342,59 @@ mod test {
     }
 
     #[actix_web::test]
-    async fn test_custom_error_error_response() {
-        #[derive(Debug, Display)]
-        enum AppError {
-            BadRequest,
-        }
-
-        impl ResponseError for AppError {
-            fn error_response(&self) -> HttpResponse {
-                HttpResponse::BadRequest().finish()
-            }
-        }
-
+    async fn test_token_extractor() {
         let root = KeyPair::new();
+        let biscuit = Biscuit::builder().build(&root).unwrap();
+
         let app = test::init_service(
             App::new()
-                .wrap(BiscuitMiddleware::new(root.public()).error_handler(
-                    |_: MiddlewareError, _: &ServiceRequest| {
-                        MiddlewareErrorResponse::ResponseError(Box::new(AppError::BadRequest))
+                .wrap(BiscuitMiddleware::new(root.public()).token_extractor(
+                    |req: &ServiceRequest| {
+                        Ok(req
+                            .headers()
+                            .get("biscuit")
+                            .ok_or(())?
+                            .to_str()
+                            .map_err(|_| ())?
+                            .to_string()
+                            .into_bytes())
                     },
                 ))
+                .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .insert_header(("biscuit", biscuit.to_base64().unwrap()))
+            .uri("/test")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn test_token_extractor_with_error_handling() {
+        let root = KeyPair::new();
+
+        let app = test::init_service(
+            App::new()
+                .wrap(
+                    BiscuitMiddleware::new(root.public())
+                        .token_extractor(|req: &ServiceRequest| {
+                            Ok(req
+                                .headers()
+                                .get("biscuit")
+                                .ok_or(())?
+                                .to_str()
+                                .map_err(|_| ())?
+                                .to_string()
+                                .into_bytes())
+                        })
+                        .error_handler(|_: MiddlewareError, _: &ServiceRequest| {
+                            HttpResponse::BadRequest().finish()
+                        }),
+                )
                 .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
         )
         .await;

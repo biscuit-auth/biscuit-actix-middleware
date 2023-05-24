@@ -1,4 +1,4 @@
-use actix_web::{get, web, App, HttpResponse, HttpServer};
+use actix_web::{dev::ServiceRequest, get, web, App, HttpResponse, HttpServer};
 use biscuit_actix_middleware::BiscuitMiddleware;
 use biscuit_auth::{macros::*, Biscuit, PublicKey};
 
@@ -6,7 +6,7 @@ use biscuit_auth::{macros::*, Biscuit, PublicKey};
 async fn main() -> std::io::Result<()> {
     let public_key = PublicKey::from_bytes_hex(
         &std::env::var("BISCUIT_PUBLIC_KEY")
-            .expect("Missing BISCUIT_PUBLIC_KEY environment variable. You can fix it by using the following command to run the example: BISCUIT_PUBLIC_KEY=2d6a07768e5768192870f91a6949cd09ce49865f2e2eb1241369c300ee7cc21f cargo run --example error_handling"),
+            .expect("Missing BISCUIT_PUBLIC_KEY environment variable. You can fix it by using the following command to run the example: BISCUIT_PUBLIC_KEY=2d6a07768e5768192870f91a6949cd09ce49865f2e2eb1241369c300ee7cc21f cargo run --example configuration"),
     )
     .expect("Couldn't parse public key");
 
@@ -26,10 +26,10 @@ You can also use the following:
   public key: 2d6a07768e5768192870f91a6949cd09ce49865f2e2eb1241369c300ee7cc21f
   token: EnYKDBgDIggKBggGEgIYDRIkCAASIDZy3NpVVceLLr5Xqcv08H7BeBQry38djs13jJz6uDxVGkBWQyFbDLPYaEo1PMZxB6In0mbYFiAjWEJfd2kr7P2qu8YQDNCoyIBsRP4A-4OzfvzFr2o3x9b7jOHksiRxbpILIiIKIITNLF9dFYE_tbpsqBEgno0bbwLi56dvpM43SaK7o8Iu
 
-The token has to be set in the authorization header:
+Because of custom configuration, the token has to be set in the biscuit header:
 
   curl -v http://localhost:8080/hello \
-    -H "Authorization: Bearer <token>"
+    -H "biscuit: <token>"
 "#
     );
 
@@ -38,7 +38,19 @@ The token has to be set in the authorization header:
         App::new()
             .wrap(
                 BiscuitMiddleware::new(public_key)
-                    .error_handler(error::middleware_app_error_handler),
+                    .error_handler(error::middleware_app_error_handler)
+                    .token_extractor(|req: &ServiceRequest| {
+                        println!("Extracting token with custom extractor");
+
+                        Ok(req
+                            .headers()
+                            .get("biscuit")
+                            .ok_or(())?
+                            .to_str()
+                            .map_err(|_| ())?
+                            .to_string()
+                            .into_bytes())
+                    }),
             )
             .service(hello)
     })
@@ -87,22 +99,18 @@ mod error {
     pub fn middleware_app_error_handler<'a>(
         err: MiddlewareError,
         _: &'a ServiceRequest,
-    ) -> MiddlewareErrorResponse {
-        MiddlewareErrorResponse::ResponseError(match err {
-            MiddlewareError::InvalidHeader => Box::new(AppError::TokenMissing),
+    ) -> HttpResponse {
+        match err {
+            MiddlewareError::InvalidHeader => {
+                println!("Handle InvalidHeader error with custom handler");
+                AppError::TokenMissing
+            }
             MiddlewareError::InvalidToken => {
                 // Eventually trace caller IP to detect brut force attack
-                Box::new(AppError::Forbidden)
+                println!("Handle InvalidToken error with custom handler");
+                AppError::Forbidden
             }
-        })
-    }
-
-    #[allow(dead_code)]
-    // HttpResponse handler
-    pub fn middleware_raw_error_handler<'a>(
-        _: MiddlewareError,
-        _: &'a ServiceRequest,
-    ) -> MiddlewareErrorResponse {
-        MiddlewareErrorResponse::HttpResponse(HttpResponse::Unauthorized().finish())
+        }
+        .error_response()
     }
 }
