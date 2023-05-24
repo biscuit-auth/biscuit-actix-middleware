@@ -1,4 +1,4 @@
-use crate::error::{MiddlewareError, MiddlewareResult};
+use crate::error::{MiddlewareError, MiddlewareErrorResponse, MiddlewareResult};
 use actix_web::{
     body::EitherBody,
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
@@ -19,21 +19,22 @@ use tracing::warn;
 /// else return an 401 Unauthorized (missing or invalid header) or 403 Forbidden (deserialization error)
 /// with an error message in the body
 ///
-/// ```rust
-///  use actix_web::{get, web, App, HttpResponse, HttpServer};
-///  use biscuit_actix_middleware::BiscuitMiddleware;
-///  use biscuit_auth::{macros::*, Biscuit, KeyPair};
+/// # Example
 ///
-///  #[actix_web::main]
-///  async fn main() -> std::io::Result<()> {
-///    let root = KeyPair::new();
-///    let public_key = root.public();
-///  
-///    HttpServer::new(move || {
-///       App::new()
-///         .wrap(BiscuitMiddleware {
-///           public_key
-///         }).service(hello)     
+/// ```rust
+/// use actix_web::{get, web, App, HttpResponse, HttpServer};
+/// use biscuit_actix_middleware::BiscuitMiddleware;
+/// use biscuit_auth::{macros::*, Biscuit, KeyPair};
+///
+/// #[actix_web::main]
+/// async fn main() -> std::io::Result<()> {
+///     let root = KeyPair::new();
+///     let public_key = root.public();
+///
+///     HttpServer::new(move || {
+///         App::new()
+///             .wrap(BiscuitMiddleware::new(public_key))
+///             .service(hello)     
 ///     })
 ///     .bind(("127.0.0.1", 8080))?;
 ///     // this code is ran during tests so we can't start a long-running server
@@ -41,10 +42,10 @@ use tracing::warn;
 ///     //.run()
 ///     //.await
 ///     Ok(())
-///   }
+/// }
 ///   
-///   #[get("/hello")]
-///   async fn hello(biscuit: web::ReqData<Biscuit>) -> HttpResponse {
+/// #[get("/hello")]
+/// async fn hello(biscuit: web::ReqData<Biscuit>) -> HttpResponse {
 ///     println!("{}", biscuit.print());
 ///     let mut authorizer = authorizer!(
 ///         r#"
@@ -58,11 +59,74 @@ use tracing::warn;
 ///     }
 ///
 ///     HttpResponse::Ok().body("Hello admin!")
-///   }
+/// }
 /// ```
 
 pub struct BiscuitMiddleware {
-    pub public_key: PublicKey,
+    public_key: PublicKey,
+    error_handler: fn(MiddlewareError, &ServiceRequest) -> MiddlewareErrorResponse,
+}
+
+impl BiscuitMiddleware {
+    /// Instantiate a new middleware
+    pub fn new(public_key: PublicKey) -> BiscuitMiddleware {
+        BiscuitMiddleware {
+            public_key,
+            error_handler: |err: MiddlewareError, _: &ServiceRequest| {
+                MiddlewareErrorResponse::ResponseError(Box::new(err) as Box<dyn ResponseError>)
+            },
+        }
+    }
+
+    /// Middleware error handling via [function pointer](https://doc.rust-lang.org/reference/types/function-pointer.html). [MiddlewareErrorResponse] can either carry an existing actix [ResponseError] implementation or a [HttpResponse](actix_web::response::HttpResponse)
+    ///
+    /// # Example
+    /// ```rust
+    /// use biscuit_actix_middleware::{BiscuitMiddleware, error::*};
+    ///
+    /// fn main() {
+    ///     let root = KeyPair::new();
+    ///     let public_key = root.public();
+    ///
+    ///     let response_error_handler = |err: MiddlewareError,
+    ///         _: &ServiceRequest| -> MiddlewareErrorResponse {
+    ///         MiddlewareErrorResponse::ResponseError(Box::new(AppError::BiscuitToken))
+    ///     };
+    ///         
+    ///     let http_response_handler = |err: MiddlewareError,
+    ///         _: &ServiceRequest| -> MiddlewareErrorResponse {
+    ///         MiddlewareErrorResponse::HttpResponse(HttpResponse::Unauthorized().finish())
+    ///     };
+    ///     
+    ///     BiscuitMiddleware::new(public_key)
+    ///         .error_handler(response_error_handler);
+    ///     
+    ///     #[derive(Debug, Display)]
+    ///     enum AppError {
+    ///         BiscuitToken,
+    ///     }
+    ///
+    ///     impl ResponseError for AppError {
+    ///         fn error_response(&self) -> HttpResponse {
+    ///             match self {
+    ///                 AppError::BiscuitToken => HttpResponse::Unauthorized().finish(),
+    ///             }
+    ///         }
+    ///     }    
+    /// }
+    ///
+    /// use actix_web::{error::ResponseError, dev::ServiceRequest, HttpResponse};
+    /// use derive_more::Display;
+    /// use biscuit_auth::KeyPair;
+    /// ```
+    pub fn error_handler(
+        mut self,
+        handler: fn(MiddlewareError, &ServiceRequest) -> MiddlewareErrorResponse,
+    ) -> Self {
+        self.error_handler = handler;
+
+        self
+    }
 }
 
 impl<S, B> Transform<S, ServiceRequest> for BiscuitMiddleware
@@ -81,6 +145,7 @@ where
         ready(Ok(ImplBiscuitMiddleware {
             service,
             public_key: self.public_key,
+            error_handler: self.error_handler,
         }))
     }
 }
@@ -88,6 +153,7 @@ where
 pub struct ImplBiscuitMiddleware<S> {
     service: S,
     public_key: PublicKey,
+    error_handler: fn(MiddlewareError, &ServiceRequest) -> MiddlewareErrorResponse,
 }
 
 impl<S> ImplBiscuitMiddleware<S> {
@@ -96,7 +162,10 @@ impl<S> ImplBiscuitMiddleware<S> {
         let header_value = Authorization::<Bearer>::parse(req).map_err(|_e| {
             #[cfg(feature = "tracing")]
             warn!("{}", _e.to_string());
-            MiddlewareError::InvalidHeader
+            match (self.error_handler)(MiddlewareError::InvalidHeader, req) {
+                MiddlewareErrorResponse::ResponseError(e) => e.error_response(),
+                MiddlewareErrorResponse::HttpResponse(http) => http,
+            }
         })?;
         let token = header_value.as_ref().token();
 
@@ -104,7 +173,10 @@ impl<S> ImplBiscuitMiddleware<S> {
         Biscuit::from_base64(token, self.public_key).map_err(|_e| {
             #[cfg(feature = "tracing")]
             warn!("{}", _e.to_string());
-            MiddlewareError::InvalidToken
+            match (self.error_handler)(MiddlewareError::InvalidToken, req) {
+                MiddlewareErrorResponse::ResponseError(e) => e.error_response(),
+                MiddlewareErrorResponse::HttpResponse(http) => http,
+            }
         })
     }
 }
@@ -133,9 +205,7 @@ where
                 })
             }
             Err(e) => Box::pin(async move {
-                let r = req
-                    .into_response(e.error_response())
-                    .map_into_right_body::<B>();
+                let r = req.into_response(e).map_into_right_body::<B>();
                 Ok(r)
             }),
         }
@@ -147,15 +217,14 @@ mod test {
     use super::*;
     use actix_web::{http::StatusCode, test, web, App, HttpResponse};
     use biscuit::KeyPair;
+    use derive_more::Display;
 
     #[actix_web::test]
     async fn test_nominal() {
         let root = KeyPair::new();
         let app = test::init_service(
             App::new()
-                .wrap(BiscuitMiddleware {
-                    public_key: root.public(),
-                })
+                .wrap(BiscuitMiddleware::new(root.public()))
                 .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
         )
         .await;
@@ -178,9 +247,7 @@ mod test {
         let root = KeyPair::new();
         let app = test::init_service(
             App::new()
-                .wrap(BiscuitMiddleware {
-                    public_key: root.public(),
-                })
+                .wrap(BiscuitMiddleware::new(root.public()))
                 .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
         )
         .await;
@@ -196,9 +263,7 @@ mod test {
         let root = KeyPair::new();
         let app = test::init_service(
             App::new()
-                .wrap(BiscuitMiddleware {
-                    public_key: root.public(),
-                })
+                .wrap(BiscuitMiddleware::new(root.public()))
                 .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
         )
         .await;
@@ -226,6 +291,57 @@ mod test {
         let resp = test::call_service(&app, req).await;
 
         assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[actix_web::test]
+    async fn test_custom_error_http_response() {
+        let root = KeyPair::new();
+        let app = test::init_service(
+            App::new()
+                .wrap(BiscuitMiddleware::new(root.public()).error_handler(
+                    |_: MiddlewareError, _: &ServiceRequest| {
+                        MiddlewareErrorResponse::HttpResponse(HttpResponse::BadRequest().finish())
+                    },
+                ))
+                .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/test").to_request();
+        let resp = test::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[actix_web::test]
+    async fn test_custom_error_error_response() {
+        #[derive(Debug, Display)]
+        enum AppError {
+            BadRequest,
+        }
+
+        impl ResponseError for AppError {
+            fn error_response(&self) -> HttpResponse {
+                HttpResponse::BadRequest().finish()
+            }
+        }
+
+        let root = KeyPair::new();
+        let app = test::init_service(
+            App::new()
+                .wrap(BiscuitMiddleware::new(root.public()).error_handler(
+                    |_: MiddlewareError, _: &ServiceRequest| {
+                        MiddlewareErrorResponse::ResponseError(Box::new(AppError::BadRequest))
+                    },
+                ))
+                .service(web::resource("/test").route(web::get().to(handler_biscuit_token_test))),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/test").to_request();
+        let resp = test::call_service(&app, req).await;
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     async fn handler_biscuit_token_test(_: web::ReqData<Biscuit>) -> HttpResponse {
