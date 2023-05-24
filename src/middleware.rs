@@ -88,7 +88,7 @@ impl BiscuitMiddleware {
         }
     }
 
-    /// Add a custom error handler to an existing middleware.
+    /// Add a custom error handler to customize HttpResponses according to [MiddlewareError] and [ServiceRequest] params
     ///
     /// # Example
     /// ```rust
@@ -132,9 +132,7 @@ impl BiscuitMiddleware {
     }
 
     /// Add a custom token extractor to an existing middleware.
-    /// The [Result] error type is voluntarily () to rely on middleware or an [ErrorHandler] implementation to define
-    /// invalid header behavior.
-    ///
+    /// The [Result] error type is `()` to keep error messages vague. To customize middleware errors [HttpResponse] see [BiscuitMiddleware::error_handler](BiscuitMiddleware#method.error_handler) method.
     ///
     /// # Example
     /// ```rust
