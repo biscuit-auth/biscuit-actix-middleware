@@ -82,7 +82,9 @@ impl BiscuitMiddleware {
     /// If either selection or rotation are not required, you can pass a [PublicKey](biscuit::PublicKey) (it already implements [RootKeyProvider] in [biscuit-auth](biscuit) lib).
     ///
     /// # Examples
+    ///
     /// Selection and rotation are not required
+    ///
     /// ```rust
     /// use biscuit_actix_middleware::BiscuitMiddleware;
     /// use biscuit_auth::KeyPair;
