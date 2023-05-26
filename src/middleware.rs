@@ -6,9 +6,12 @@ use actix_web::{
     Error, HttpMessage, HttpResponse, ResponseError,
 };
 use actix_web_httpauth::headers::authorization::{Authorization, Bearer};
-use biscuit::{Biscuit, PublicKey};
+use biscuit::{Biscuit, RootKeyProvider};
 use futures_util::future::LocalBoxFuture;
-use std::future::{ready, Ready};
+use std::{
+    future::{ready, Ready},
+    rc::Rc,
+};
 #[cfg(feature = "tracing")]
 use tracing::warn;
 
@@ -66,16 +69,76 @@ type TokenExtractor = fn(&ServiceRequest) -> Option<Vec<u8>>;
 /// ```
 
 pub struct BiscuitMiddleware {
-    public_key: PublicKey,
+    public_key: Rc<dyn RootKeyProvider>,
     error_handler: ErrorHandler,
     token_extractor: TokenExtractor,
 }
 
 impl BiscuitMiddleware {
-    /// Instantiate a new middleware
-    pub fn new(public_key: PublicKey) -> BiscuitMiddleware {
+    /// Instantiate a new middleware.
+    ///
+    /// [RootKeyProvider] is a [biscuit-auth](biscuit) trait used to delegate [PublicKey](biscuit::PublicKey) selection/rotation implementation.
+    ///
+    /// If either selection or rotation are not required, you can pass a [PublicKey](biscuit::PublicKey) (it already implements [RootKeyProvider] in [biscuit-auth](biscuit) lib).
+    ///
+    /// # Examples
+    /// Selection and rotation are not required
+    /// ```rust
+    /// use biscuit_actix_middleware::BiscuitMiddleware;
+    /// use biscuit_auth::KeyPair;
+    ///
+    /// BiscuitMiddleware::new(KeyPair::new().public());
+    /// ```
+    ///
+    /// Setup a simple KeyProvider that only accept token with a root_key_id corresponding to an index of an existing [PublicKey](biscuit_auth::PublicKey)
+    /// ```rust
+    /// use biscuit_auth::{error::Format, Biscuit, KeyPair, PublicKey, RootKeyProvider};
+    /// use biscuit_actix_middleware::BiscuitMiddleware;
+    ///
+    /// struct KeyProvider {
+    ///     roots: Vec<KeyPair>,
+    /// }
+    ///
+    /// impl KeyProvider {
+    ///     fn new() -> Self {
+    ///         let mut new = KeyProvider { roots: vec![] };
+    ///
+    ///         for _ in 1..11 {
+    ///             new.roots.push(KeyPair::new());
+    ///         }
+    ///
+    ///         new
+    ///     }
+    /// }
+    ///
+    /// impl RootKeyProvider for KeyProvider {
+    ///     fn choose(&self, key_id: Option<u32>) -> Result<PublicKey, Format> {
+    ///         Ok(self
+    ///             .roots
+    ///             .get(key_id.ok_or(Format::UnknownPublicKey)? as usize)
+    ///             .ok_or(Format::UnknownPublicKey)?
+    ///             .public())
+    ///     }
+    /// }
+    ///
+    /// let key_provider = KeyProvider::new();
+    ///
+    /// let mut builder = Biscuit::builder();
+    /// builder.set_root_key_id(2);
+    ///
+    /// let biscuit = builder.build(&key_provider.roots[2]).unwrap();
+    ///
+    /// assert!(Biscuit::from_base64(biscuit.to_base64().unwrap(), &key_provider).is_ok());
+    /// assert!(Biscuit::from_base64(biscuit.to_base64().unwrap(), &KeyPair::new().public()).is_err());
+    ///
+    /// let middleware = BiscuitMiddleware::new(key_provider);
+    /// ```
+    pub fn new<KP>(public_key: KP) -> BiscuitMiddleware
+    where
+        KP: RootKeyProvider + 'static,
+    {
         BiscuitMiddleware {
-            public_key,
+            public_key: Rc::new(public_key),
             error_handler: |err: MiddlewareError, _: &ServiceRequest| err.error_response(),
             token_extractor: |req: &ServiceRequest| {
                 Some(
@@ -83,7 +146,6 @@ impl BiscuitMiddleware {
                         .map_err(|_e| {
                             #[cfg(feature = "tracing")]
                             warn!("{}", _e.to_string());
-                            ()
                         })
                         .ok()?
                         .as_ref()
@@ -95,35 +157,33 @@ impl BiscuitMiddleware {
         }
     }
 
-    /// Add a custom error handler to customize HttpResponses according to [MiddlewareError] and [ServiceRequest] params
+    /// Add a custom error handler to customize [HttpResponse] according to [MiddlewareError] and [ServiceRequest] params
     ///
     /// # Example
     /// ```rust
     /// use biscuit_actix_middleware::{BiscuitMiddleware, error::*};
     ///
-    /// fn main() {
-    ///     let root = KeyPair::new();
-    ///     let public_key = root.public();
+    /// let root = KeyPair::new();
+    /// let public_key = root.public();
     ///     
-    ///     BiscuitMiddleware::new(public_key)
-    ///         .error_handler(
-    ///             |err: MiddlewareError, _: &ServiceRequest| -> HttpResponse {
-    ///                 AppError::BiscuitToken.error_response()
-    ///             });
+    /// BiscuitMiddleware::new(public_key)
+    ///     .error_handler(
+    ///         |err: MiddlewareError, _: &ServiceRequest| -> HttpResponse {
+    ///             AppError::BiscuitToken.error_response()
+    ///         });
     ///     
-    ///     #[derive(Debug, Display)]
-    ///     enum AppError {
-    ///         BiscuitToken,
-    ///     }
-    ///
-    ///     impl ResponseError for AppError {
-    ///         fn error_response(&self) -> HttpResponse {
-    ///             match self {
-    ///                 AppError::BiscuitToken => HttpResponse::Unauthorized().finish(),
-    ///             }
-    ///         }
-    ///     }    
+    /// #[derive(Debug, Display)]
+    /// enum AppError {
+    ///     BiscuitToken,
     /// }
+    ///
+    /// impl ResponseError for AppError {
+    ///     fn error_response(&self) -> HttpResponse {
+    ///         match self {
+    ///             AppError::BiscuitToken => HttpResponse::Unauthorized().finish(),
+    ///         }
+    ///     }
+    /// }    
     ///
     /// use actix_web::{error::ResponseError, dev::ServiceRequest, HttpResponse};
     /// use derive_more::Display;
@@ -138,7 +198,7 @@ impl BiscuitMiddleware {
         self
     }
 
-    /// Add a custom token extractor to an existing middleware.
+    /// Add a custom token extractor to an existing middleware
     ///
     /// # Example
     /// ```rust
@@ -146,22 +206,20 @@ impl BiscuitMiddleware {
     /// use actix_web::{dev::ServiceRequest};
     /// use biscuit_auth::KeyPair;
     ///
-    /// fn main() {
-    ///     let root = KeyPair::new();
-    ///     let public_key = root.public();
+    /// let root = KeyPair::new();
+    /// let public_key = root.public();
     ///     
-    ///     BiscuitMiddleware::new(public_key)
-    ///         .token_extractor(|req: &ServiceRequest| {
-    ///             Some(
-    ///                 req.headers()
-    ///                     .get("biscuit")?
-    ///                     .to_str()
-    ///                     .ok()?
-    ///                     .to_string()
-    ///                     .into_bytes(),
-    ///             )
-    ///         });
-    /// }
+    /// BiscuitMiddleware::new(public_key)
+    ///     .token_extractor(|req: &ServiceRequest| {
+    ///         Some(
+    ///             req.headers()
+    ///                 .get("biscuit")?
+    ///                 .to_str()
+    ///                 .ok()?
+    ///                 .to_string()
+    ///                 .into_bytes(),
+    ///         )
+    ///     });
     /// ```
     pub fn token_extractor(mut self, extractor: fn(&ServiceRequest) -> Option<Vec<u8>>) -> Self {
         self.token_extractor = extractor;
@@ -185,7 +243,7 @@ where
     fn new_transform(&self, service: S) -> Self::Future {
         ready(Ok(ImplBiscuitMiddleware {
             service,
-            public_key: self.public_key,
+            public_key: self.public_key.clone(),
             error_handler: self.error_handler,
             token_extractor: self.token_extractor,
         }))
@@ -194,7 +252,7 @@ where
 
 pub struct ImplBiscuitMiddleware<S> {
     service: S,
-    public_key: PublicKey,
+    public_key: Rc<dyn RootKeyProvider>,
     error_handler: ErrorHandler,
     token_extractor: TokenExtractor,
 }
@@ -204,8 +262,8 @@ impl<S> ImplBiscuitMiddleware<S> {
         let token = (self.token_extractor)(req)
             .ok_or((self.error_handler)(MiddlewareError::InvalidHeader, req))?;
 
-        // deserialize token into a biscuit
-        Biscuit::from_base64(token, self.public_key).map_err(|_e| {
+        // Parse token
+        Biscuit::from_base64(token, &self.public_key).map_err(|_e| {
             #[cfg(feature = "tracing")]
             warn!("{}", _e.to_string());
             (self.error_handler)(MiddlewareError::InvalidToken, req)
