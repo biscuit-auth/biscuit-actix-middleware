@@ -92,7 +92,7 @@ impl BiscuitMiddleware {
     /// BiscuitMiddleware::new(KeyPair::new().public());
     /// ```
     ///
-    /// Setup a simple KeyProvider that only accept token with a root_key_id corresponding to an index of an existing [PublicKey](biscuit_auth::PublicKey)
+    /// Setup a simple KeyProvider that only accepts tokens with a root_key_id corresponding to an index of an existing [PublicKey](biscuit_auth::PublicKey)
     /// ```rust
     /// use biscuit_auth::{error::Format, Biscuit, KeyPair, PublicKey, RootKeyProvider};
     /// use biscuit_actix_middleware::BiscuitMiddleware;
