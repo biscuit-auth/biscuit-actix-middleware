@@ -4,11 +4,21 @@ use biscuit_auth::{macros::*, Biscuit, PublicKey};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    let public_key = PublicKey::from_bytes_hex(
+    let required_public_key = PublicKey::from_bytes_hex(
         &std::env::var("BISCUIT_PUBLIC_KEY")
             .expect("Missing BISCUIT_PUBLIC_KEY environment variable. You can fix it by using the following command to run the example: BISCUIT_PUBLIC_KEY=2d6a07768e5768192870f91a6949cd09ce49865f2e2eb1241369c300ee7cc21f cargo run --example configuration"),
     )
     .expect("Couldn't parse public key");
+
+    let optional_public_key =
+        std::env::var("BISCUIT_OPTIONAL_PUBLIC_KEY")
+            .ok()
+            .and_then(|bytes_hex| {
+                Some(
+                    PublicKey::from_bytes_hex(&bytes_hex)
+                        .expect("Couldn't parse optional public key"),
+                )
+            });
 
     println!(
         r#"
@@ -30,6 +40,12 @@ Because of custom configuration, the token has to be set in the biscuit header:
 
   curl -v http://localhost:8080/hello \
     -H "biscuit: <token>"
+
+An optional secondary public key can be provided through the `BISCUIT_OPTIONAL_PUBLIC_KEY` environment variable. 
+Once set, each token must be generated with a root-key-id parameter equal to 0 or 1. Tokens signature are verified respectively with `BISCUIT_PUBLIC_KEY` (0) AND `BISCUIT_PUBLIC_KEY` (1).
+
+You can generate token with a root-key-id parameter with the biscuit CLI:
+> echo 'role("admin");' | biscuit generate --private-key <the private key> -root-key-id <root key id> -
 "#
     );
 
@@ -37,20 +53,23 @@ Because of custom configuration, the token has to be set in the biscuit header:
     HttpServer::new(move || {
         App::new()
             .wrap(
-                BiscuitMiddleware::new(public_key)
-                    .error_handler(error::middleware_app_error_handler)
-                    .token_extractor(|req: &ServiceRequest| {
-                        println!("Extracting token with custom extractor");
+                BiscuitMiddleware::new(key_provider::KeyProvider::new(
+                    required_public_key,
+                    optional_public_key,
+                ))
+                .error_handler(error::middleware_app_error_handler)
+                .token_extractor(|req: &ServiceRequest| {
+                    println!("Extracting token with custom extractor");
 
-                        Some(
-                            req.headers()
-                                .get("biscuit")?
-                                .to_str()
-                                .ok()?
-                                .to_string()
-                                .into_bytes(),
-                        )
-                    }),
+                    Some(
+                        req.headers()
+                            .get("biscuit")?
+                            .to_str()
+                            .ok()?
+                            .to_string()
+                            .into_bytes(),
+                    )
+                }),
             )
             .service(hello)
     })
@@ -73,6 +92,44 @@ async fn hello(biscuit: web::ReqData<Biscuit>) -> HttpResponse {
     }
 
     HttpResponse::Ok().body("Hello admin!")
+}
+
+mod key_provider {
+    use biscuit_auth::{error::Format, PublicKey, RootKeyProvider};
+
+    pub struct KeyProvider {
+        roots: Vec<PublicKey>,
+    }
+
+    impl KeyProvider {
+        pub fn new(required_key: PublicKey, optional_key: Option<PublicKey>) -> Self {
+            let mut new = KeyProvider {
+                roots: vec![required_key],
+            };
+
+            if let Some(pk) = optional_key {
+                new.roots.push(pk);
+            }
+
+            new
+        }
+    }
+
+    impl RootKeyProvider for KeyProvider {
+        fn choose(&self, key_id: Option<u32>) -> Result<PublicKey, Format> {
+            if self.roots.len() > 1 {
+                Ok(self
+                    .roots
+                    .get(key_id.ok_or(Format::UnknownPublicKey)? as usize)
+                    .ok_or(Format::UnknownPublicKey)?
+                    .clone())
+            } else if self.roots.len() == 1 {
+                Ok(self.roots.last().unwrap().clone())
+            } else {
+                Err(Format::EmptyKeys)
+            }
+        }
+    }
 }
 
 mod error {

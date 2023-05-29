@@ -142,7 +142,7 @@ impl BiscuitMiddleware {
         BiscuitMiddleware {
             public_key: Rc::new(public_key),
             error_handler: |err: MiddlewareError, _: &ServiceRequest| err.error_response(),
-            token_extractor: Self::token_extractor_default,
+            token_extractor: Self::default_token_extractor,
         }
     }
 
@@ -217,7 +217,7 @@ impl BiscuitMiddleware {
     }
 
     /// Middleware default token extraction logic. It can be use as a base of a [custom token extractor](BiscuitMiddleware#method.token_extractor) to add pre/post processing to token extraction.
-    pub fn token_extractor_default(req: &ServiceRequest) -> Option<Vec<u8>> {
+    pub fn default_token_extractor(req: &ServiceRequest) -> Option<Vec<u8>> {
         Some(
             Authorization::<Bearer>::parse(req)
                 .map_err(|_e| {
