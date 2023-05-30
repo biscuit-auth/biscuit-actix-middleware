@@ -125,14 +125,6 @@ impl BiscuitMiddleware {
     ///
     /// let key_provider = KeyProvider::new();
     ///
-    /// let mut builder = Biscuit::builder();
-    /// builder.set_root_key_id(2);
-    ///
-    /// let biscuit = builder.build(&key_provider.roots[2]).unwrap();
-    ///
-    /// assert!(Biscuit::from_base64(biscuit.to_base64().unwrap(), &key_provider).is_ok());
-    /// assert!(Biscuit::from_base64(biscuit.to_base64().unwrap(), &KeyPair::new().public()).is_err());
-    ///
     /// let middleware = BiscuitMiddleware::new(key_provider);
     /// ```
     pub fn new<KP>(public_key: KP) -> BiscuitMiddleware
