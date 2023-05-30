@@ -268,7 +268,7 @@ impl<S> ImplBiscuitMiddleware<S> {
             .ok_or((self.error_handler)(MiddlewareError::InvalidHeader, req))?;
 
         // Parse token
-        Biscuit::from_base64(token, &self.public_key).map_err(|_e| {
+        Biscuit::from_base64(token, self.public_key.clone()).map_err(|_e| {
             #[cfg(feature = "tracing")]
             warn!("{}", _e.to_string());
             (self.error_handler)(MiddlewareError::InvalidToken, req)
