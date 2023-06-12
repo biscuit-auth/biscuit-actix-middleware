@@ -1,7 +1,7 @@
 use actix_web::{error::ResponseError, HttpResponse};
 use derive_more::Display;
 
-pub type MiddlewareResult<R> = Result<R, MiddlewareError>;
+pub(crate) type MiddlewareResult<R> = Result<R, HttpResponse>;
 
 #[derive(Debug, Display)]
 pub enum MiddlewareError {

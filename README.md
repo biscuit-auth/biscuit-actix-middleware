@@ -9,7 +9,7 @@ The middleware expects a base64-encoded token through the [bearer token HTTP aut
 - Requests without a bearer token are rejected with a HTTP `401 Unauthorized` error;
 - Requests with tokens that fail parsing or cryptographic verification are rejected with a HTTP `403 Forbidden` error.
 
-Token extraction logic, token parsing logic and error handling are not configurable yet.
+Token extraction logic and error handling are configurable (see [Configuration example](./examples/configuration.rs)).
 
 ## Working example
 

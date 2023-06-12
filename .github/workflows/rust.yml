@@ -37,5 +37,5 @@ jobs:
         cargo test --verbose
         cargo build --example readme
         cargo build --example readme --features tracing
-      
+        cargo build --example configuration
 

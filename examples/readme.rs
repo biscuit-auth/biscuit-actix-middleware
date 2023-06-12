@@ -43,7 +43,7 @@ The token has to be set in the authorization header:
     println!("Starting server on 127.0.0.1:8080");
     HttpServer::new(move || {
         let app = App::new()
-            .wrap(BiscuitMiddleware { public_key })
+            .wrap(BiscuitMiddleware::new(public_key))
             .service(hello);
 
         #[cfg(feature = "tracing")]
