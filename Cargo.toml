@@ -15,15 +15,17 @@ keywords = ["http", "actix-web", "biscuit", "token", "authorization"]
 categories = ["asynchronous", "web-programming"]
 
 [dependencies]
-actix-web = { version = "4.3.1", default-features = false, features = ["macros"] }
+actix-web = { version = "4.3.1", default-features = false, features = [
+    "macros",
+] }
 actix-web-httpauth = "0.8.0"
-biscuit-auth = { git = "https://github.com/Tipnos/biscuit-rust.git", branch="impl-box-root-key-provider" }
+biscuit-auth = { version = "3.2.0", default-features = false }
 derive_more = { version = "0.99.17", default-features = false }
-futures-util = {version = "0.3.28", default-features = false }
+futures-util = { version = "0.3.28", default-features = false }
 time = { version = "0.3.20", default-features = false }
 tracing = { version = "0.1.37", default-features = false, optional = true }
 
 [dev-dependencies]
-biscuit-auth = { git = "https://github.com/Tipnos/biscuit-rust.git", branch="impl-box-root-key-provider" }
+biscuit-auth = { version = "3.2.0" }
 tracing-actix-web = "0.7.3"
-tracing-subscriber = {version = "0.3.16", features = ["env-filter"]}
+tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
